@@ -8,6 +8,8 @@ import * as borsh from "borsh";
 import * as fs from "fs";
 import path from "path";
 
+const PROGRAM_ID = "Enter Program ID here";
+
 // Function for batching into 100
 function chunkArray<T>(array: T[], size: number): T[][] {
   const result: T[][] = [];
@@ -150,7 +152,7 @@ function saveToCSV(
 
 const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
 
-let programId = new PublicKey("TRBZyQHB3m68FGeVsqTK39Wm4xejadjVhP5MAZaKWDM");
+let programId = new PublicKey(PROGRAM_ID);
 
 let config: GetProgramAccountsConfig = {
   commitment: "finalized",

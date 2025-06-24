@@ -21,6 +21,17 @@ Generated using llm.
    yarn install
    ```
 
+## Setup
+
+1. Open `index.ts` and replace the placeholder with your program ID:
+   ```typescript
+   const PROGRAM_ID = "Enter Program ID here";
+   ```
+   Change it to:
+   ```typescript
+   const PROGRAM_ID = "your_actual_program_id_here";
+   ```
+
 ## Usage
 
 To run the indexer and export the accounts to CSV, simply use:
