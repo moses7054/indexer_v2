@@ -7,8 +7,13 @@ import {
 import * as borsh from "borsh";
 import * as fs from "fs";
 import path from "path";
+import { exit } from "process";
 
 const PROGRAM_ID = "Enter Program ID here";
+if (PROGRAM_ID === "Enter Program ID here") {
+  console.error("Program ID is not set, exiting...");
+  exit(1);
+}
 
 // Function for batching into 100
 function chunkArray<T>(array: T[], size: number): T[][] {
