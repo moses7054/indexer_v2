@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "index": "ts-node index.ts",
+    "test": "ts-node test.ts",
     "build": "tsc",
     "dev": "ts-node index.ts"
   },
