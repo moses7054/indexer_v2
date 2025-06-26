@@ -9,7 +9,7 @@ import * as fs from "fs";
 import path from "path";
 import { exit } from "process";
 
-const PROGRAM_ID = "Enter Program ID here";
+const PROGRAM_ID = "TRBZyQHB3m68FGeVsqTK39Wm4xejadjVhP5MAZaKWDM";
 if (PROGRAM_ID === "Enter Program ID here") {
   console.error("Program ID is not set, exiting...");
   exit(1);

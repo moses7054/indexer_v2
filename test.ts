@@ -10,19 +10,59 @@ import * as fs from "fs";
 import path from "path";
 import { exit } from "process";
 
-const PROGRAM_ID = "Enter Program ID here";
-if (PROGRAM_ID === "Enter Program ID here") {
-  console.error("Program ID is not set, exiting...");
-  exit(1);
-}
+const PROGRAM_ID = "TRBZyQHB3m68FGeVsqTK39Wm4xejadjVhP5MAZaKWDM";
 
 const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
 
-// Function for getting the latest signature for a PDA
+// Rate limiting configuration
+const RATE_LIMIT_CONFIG = {
+  maxRetries: 5,
+  baseDelay: 1000, // 1 second
+  maxDelay: 30000, // 30 seconds
+  batchDelay: 2000, // 2 seconds between batches
+  requestDelay: 100, // 100ms between individual requests
+};
+
+// Utility function for exponential backoff delay
+function getBackoffDelay(attempt: number): number {
+  const delay = Math.min(
+    RATE_LIMIT_CONFIG.baseDelay * Math.pow(2, attempt),
+    RATE_LIMIT_CONFIG.maxDelay
+  );
+  return delay + Math.random() * 1000; // Add jitter
+}
+
+// Utility function to check if error is rate limit related
+function isRateLimitError(error: any): boolean {
+  const errorMessage = error?.message?.toLowerCase() || "";
+  const errorCode = error?.code;
+
+  return (
+    errorMessage.includes("too many requests") ||
+    errorMessage.includes("rate limit") ||
+    errorMessage.includes("429") ||
+    errorCode === 429 ||
+    errorMessage.includes("throttled") ||
+    errorMessage.includes("quota exceeded")
+  );
+}
+
+// Utility function to sleep
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Function for getting the latest signature for a PDA with retry logic
 async function getLatestSignature(
-  pda: PublicKey
+  pda: PublicKey,
+  retryCount: number = 0
 ): Promise<{ slot: number; signature: string } | null> {
   try {
+    // Add delay between requests to avoid overwhelming the API
+    if (retryCount === 0) {
+      await sleep(RATE_LIMIT_CONFIG.requestDelay);
+    }
+
     const signaturesOptions: SignaturesForAddressOptions = {
       limit: 1,
     };
@@ -40,7 +80,29 @@ async function getLatestSignature(
     }
     return null;
   } catch (error) {
-    console.error(`Error getting signature for PDA ${pda.toBase58()}:`, error);
+    console.error(
+      `Error getting signature for PDA ${pda.toBase58()} (attempt ${
+        retryCount + 1
+      }):`,
+      error
+    );
+
+    // Check if it's a rate limit error
+    if (isRateLimitError(error) && retryCount < RATE_LIMIT_CONFIG.maxRetries) {
+      const delay = getBackoffDelay(retryCount);
+      console.log(`Rate limit hit, retrying in ${delay}ms...`);
+      await sleep(delay);
+      return getLatestSignature(pda, retryCount + 1);
+    }
+
+    // For non-rate-limit errors, still retry a few times
+    if (retryCount < 2) {
+      const delay = getBackoffDelay(retryCount);
+      console.log(`Retrying in ${delay}ms...`);
+      await sleep(delay);
+      return getLatestSignature(pda, retryCount + 1);
+    }
+
     return null;
   }
 }
@@ -54,20 +116,55 @@ function chunkArray<T>(array: T[], size: number): T[][] {
   return result;
 }
 
-// Function for getting account details and signatures, takes in the batch
+// Function for getting account details with retry logic
+async function getAccountDetailsWithRetry(
+  batch: PublicKey[],
+  retryCount: number = 0
+): Promise<any[]> {
+  try {
+    const accountDetails = await connection.getMultipleAccountsInfo(batch);
+    return accountDetails;
+  } catch (error) {
+    console.error(
+      `Error getting account details (attempt ${retryCount + 1}):`,
+      error
+    );
+
+    if (isRateLimitError(error) && retryCount < RATE_LIMIT_CONFIG.maxRetries) {
+      const delay = getBackoffDelay(retryCount);
+      console.log(`Rate limit hit, retrying account details in ${delay}ms...`);
+      await sleep(delay);
+      return getAccountDetailsWithRetry(batch, retryCount + 1);
+    }
+
+    if (retryCount < 2) {
+      const delay = getBackoffDelay(retryCount);
+      console.log(`Retrying account details in ${delay}ms...`);
+      await sleep(delay);
+      return getAccountDetailsWithRetry(batch, retryCount + 1);
+    }
+
+    throw error;
+  }
+}
+
+// Function for getting account details and signatures with rate limiting
 async function getAccountDetailsAndSignatures(batch: PublicKey[]): Promise<{
   accountDetails: any[];
   signatures: Array<{ slot: number; signature: string } | null>;
 }> {
   const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
 
-  // Get account details
-  const accountDetails = await connection.getMultipleAccountsInfo(batch);
+  // Get account details with retry logic
+  const accountDetails = await getAccountDetailsWithRetry(batch);
 
-  // Get signatures for each PDA (this will be slower but necessary for accurate data)
-  const signatures = await Promise.all(
-    batch.map((pda) => getLatestSignature(pda))
-  );
+  // Get signatures for each PDA with sequential processing to avoid overwhelming the API
+  const signatures: Array<{ slot: number; signature: string } | null> = [];
+
+  for (const pda of batch) {
+    const signature = await getLatestSignature(pda);
+    signatures.push(signature);
+  }
 
   console.log("accountDetails", accountDetails);
   console.log("signatures", signatures);
@@ -209,24 +306,52 @@ let config: GetProgramAccountsConfig = {
   ],
 };
 
-let accounts = await connection.getProgramAccounts(programId, config);
+// Get program accounts with retry logic
+let accounts;
+try {
+  accounts = await connection.getProgramAccounts(programId, config);
+} catch (error) {
+  console.error("Error getting program accounts:", error);
+  if (isRateLimitError(error)) {
+    console.log("Rate limit hit on initial request, retrying with delay...");
+    await sleep(RATE_LIMIT_CONFIG.baseDelay);
+    accounts = await connection.getProgramAccounts(programId, config);
+  } else {
+    throw error;
+  }
+}
 
 const pdasOfAccount = accounts.map((account) => {
   return account.pubkey;
 });
 
+console.log("pdasOfAccount length", pdasOfAccount.length);
 console.log("pdasOfAccount", pdasOfAccount);
 
-const batches = chunkArray(pdasOfAccount, 100);
+const batches: PublicKey[][] = chunkArray(pdasOfAccount, 50);
 console.log("batches", batches);
 const details: any[] = [];
 const allSignatures: Array<{ slot: number; signature: string } | null> = [];
 
-for (const batch of batches) {
+for (let i = 0; i < batches.length; i++) {
+  const batch: PublicKey[] = batches[i];
+  console.log(
+    `Processing batch ${i + 1}/${batches.length} (${batch.length} accounts)`
+  );
+
   const batchResult = await getAccountDetailsAndSignatures(batch);
   details.push(...batchResult.accountDetails);
   allSignatures.push(...batchResult.signatures);
+
+  // Add delay between batches to avoid overwhelming the API
+  if (i < batches.length - 1) {
+    console.log(
+      `Waiting ${RATE_LIMIT_CONFIG.batchDelay}ms before next batch...`
+    );
+    await sleep(RATE_LIMIT_CONFIG.batchDelay);
+  }
 }
+
 console.log("details", details);
 console.log("allSignatures", allSignatures);
 
